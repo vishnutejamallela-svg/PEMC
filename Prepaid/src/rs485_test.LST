@@ -1,0 +1,613 @@
+C51 COMPILER V9.60.0.0   RS485_TEST                                                        10/09/2026 16:51:51 PAGE 1   
+
+
+C51 COMPILER V9.60.0.0, COMPILATION OF MODULE RS485_TEST
+OBJECT MODULE PLACED IN C:\Users\Dinesh\.copilot\session-state\48682e31-b259-4d1f-8ab3-35f8af34aec9\files\modbus-check\rs485_test.obj
+COMPILER INVOKED BY: D:\Applications\C51\BIN\C51.exe src\rs485_test.c INCDIR(src;vendor\MS51_BSP\MS51FC0AE_MS51XC0BE_MS5
+                    -1EB0AE_MS51EC0AE_MS51TC0AE_MS51PC0AE\Library\Device\Include;vendor\MS51_BSP\MS51FC0AE_MS51XC0BE_MS51EB0AE_MS51EC0AE_MS51
+                    -TC0AE_MS51PC0AE\Library\StdDriver\inc) LARGE OBJECT(C:\Users\Dinesh\.copilot\session-state\48682e31-b259-4d1f-8ab3-35f8a
+                    -f34aec9\files\modbus-check\rs485_test.obj)
+
+line level    source
+
+   1          #include "rs485_test.h"
+   2          #include "board_io.h"
+   3          #include "uart.h"
+   4          
+   5          #define METER_SLAVE_ID          5
+   6          #define CONTROLLER_SLAVE_ID     1
+   7          #define METER_BAUD_RATE         9600UL
+   8          #define METER_REGISTER_START    7
+   9          #define METER_REGISTER_COUNT    10
+  10          #define RELAY_REGISTER_COUNT    3
+  11          #define SLAVE_REGISTER_COUNT    (RELAY_REGISTER_COUNT + METER_REGISTER_COUNT)
+  12          #define RTU_FRAME_GAP_MS        4
+  13          #define MASTER_TIMEOUT_MS       100
+  14          #define MASTER_POLL_INTERVAL_MS 250
+  15          #define RX_BUFFER_SIZE          48
+  16          
+  17          static uint8_t xdata port1_rx_buffer[RX_BUFFER_SIZE];
+  18          static uint8_t xdata port2_rx_buffer[RX_BUFFER_SIZE];
+  19          static uint8_t xdata tx_buffer[RX_BUFFER_SIZE];
+  20          static uint16_t xdata meter_registers[METER_REGISTER_COUNT];
+  21          static uint8_t relay_states[RELAY_REGISTER_COUNT];
+  22          static volatile uint8_t port1_rx_length;
+  23          static volatile uint8_t port2_rx_length;
+  24          static volatile uint8_t port1_silence_ms;
+  25          static volatile uint8_t port2_silence_ms;
+  26          static volatile uint8_t port1_rx_count;
+  27          static volatile uint8_t port2_rx_count;
+  28          static volatile uint8_t port1_tx_complete;
+  29          static volatile uint8_t port2_tx_complete;
+  30          static uint8_t master_waiting;
+  31          static uint16_t master_timer_ms;
+  32          static uint16_t master_timeout_ms;
+  33          static uint8_t meter_data_valid;
+  34          
+  35          static uint8_t RS485_EvenParity(uint8_t value)
+  36          {
+  37   1          uint8_t parity;
+  38   1      
+  39   1          parity = 0;
+  40   1          while (value != 0)
+  41   1          {
+  42   2              parity ^= (value & 1);
+  43   2              value >>= 1;
+  44   2          }
+  45   1          return parity;
+  46   1      }
+  47          
+  48          static void RS485_SendByte(uint8_t port, uint8_t value)
+  49          {
+  50   1          uint8_t parity;
+  51   1      
+  52   1          parity = RS485_EvenParity(value);
+C51 COMPILER V9.60.0.0   RS485_TEST                                                        10/09/2026 16:51:51 PAGE 2   
+
+  53   1          SFRS = 0;
+  54   1          if (port == 1)
+  55   1          {
+  56   2              port1_tx_complete = 0;
+  57   2              TB8_1 = parity;
+  58   2              SBUF_1 = value;
+  59   2              while (port1_tx_complete == 0) { }
+  60   2          }
+  61   1          else
+  62   1          {
+  63   2              port2_tx_complete = 0;
+  64   2              TB8 = parity;
+  65   2              SBUF = value;
+  66   2              while (port2_tx_complete == 0) { }
+  67   2          }
+  68   1      }
+  69          
+  70          static uint16_t Modbus_Crc16(uint8_t xdata *buffer, uint8_t length)
+  71          {
+  72   1          uint8_t index;
+  73   1          uint8_t bit_index;
+  74   1          uint16_t crc;
+  75   1      
+  76   1          crc = 0xFFFF;
+  77   1          for (index = 0; index < length; index++)
+  78   1          {
+  79   2              crc ^= buffer[index];
+  80   2              for (bit_index = 0; bit_index < 8; bit_index++)
+  81   2              {
+  82   3                  if (crc & 1)
+  83   3                  {
+  84   4                      crc >>= 1;
+  85   4                      crc ^= 0xA001;
+  86   4                  }
+  87   3                  else
+  88   3                  {
+  89   4                      crc >>= 1;
+  90   4                  }
+  91   3              }
+  92   2          }
+  93   1          return crc;
+  94   1      }
+  95          
+  96          static uint8_t Modbus_FrameValid(uint8_t xdata *frame, uint8_t length)
+  97          {
+  98   1          uint16_t crc;
+  99   1      
+ 100   1          if (length < 4)
+ 101   1          {
+ 102   2              return 0;
+ 103   2          }
+ 104   1          crc = Modbus_Crc16(frame, length - 2);
+ 105   1          return (frame[length - 2] == (uint8_t)crc &&
+ 106   1                  frame[length - 1] == (uint8_t)(crc >> 8));
+ 107   1      }
+ 108          
+ 109          static void RS485_ClearMeterRegisters(void)
+ 110          {
+ 111   1          uint8_t index;
+ 112   1      
+ 113   1          for (index = 0; index < METER_REGISTER_COUNT; index++)
+ 114   1          {
+C51 COMPILER V9.60.0.0   RS485_TEST                                                        10/09/2026 16:51:51 PAGE 3   
+
+ 115   2              meter_registers[index] = 0;
+ 116   2          }
+ 117   1      }
+ 118          
+ 119          void RS485_UART0_ISR(void) interrupt 4
+ 120          {
+ 121   1          uint8_t sfr_page;
+ 122   1          uint8_t value;
+ 123   1      
+ 124   1          sfr_page = SFRS;
+ 125   1          SFRS = 0;
+ 126   1          if (RI)
+ 127   1          {
+ 128   2              value = SBUF;
+ 129   2              RI = 0;
+ 130   2              if (port2_rx_length < RX_BUFFER_SIZE)
+ 131   2              {
+ 132   3                  port2_rx_buffer[port2_rx_length++] = value;
+ 133   3                  port2_silence_ms = 0;
+ 134   3              }
+ 135   2              if (port2_rx_count != 0xFF)
+ 136   2              {
+ 137   3                  port2_rx_count++;
+ 138   3              }
+ 139   2          }
+ 140   1          if (TI)
+ 141   1          {
+ 142   2              TI = 0;
+ 143   2              port2_tx_complete = 1;
+ 144   2          }
+ 145   1          SFRS = sfr_page;
+ 146   1      }
+ 147          
+ 148          void RS485_UART1_ISR(void) interrupt 15
+ 149          {
+ 150   1          uint8_t sfr_page;
+ 151   1          uint8_t value;
+ 152   1      
+ 153   1          sfr_page = SFRS;
+ 154   1          SFRS = 0;
+ 155   1          if (RI_1)
+ 156   1          {
+ 157   2              value = SBUF_1;
+ 158   2              RI_1 = 0;
+ 159   2              if (port1_rx_length < RX_BUFFER_SIZE)
+ 160   2              {
+ 161   3                  port1_rx_buffer[port1_rx_length++] = value;
+ 162   3                  port1_silence_ms = 0;
+ 163   3              }
+ 164   2              if (port1_rx_count != 0xFF)
+ 165   2              {
+ 166   3                  port1_rx_count++;
+ 167   3              }
+ 168   2          }
+ 169   1          if (TI_1)
+ 170   1          {
+ 171   2              TI_1 = 0;
+ 172   2              port1_tx_complete = 1;
+ 173   2          }
+ 174   1          SFRS = sfr_page;
+ 175   1      }
+ 176          
+C51 COMPILER V9.60.0.0   RS485_TEST                                                        10/09/2026 16:51:51 PAGE 4   
+
+ 177          static void RS485_SendFrame(uint8_t port, uint8_t xdata *frame, uint8_t length)
+ 178          {
+ 179   1          uint8_t index;
+ 180   1          uint16_t crc;
+ 181   1      
+ 182   1          crc = Modbus_Crc16(frame, length);
+ 183   1          frame[length] = (uint8_t)crc;
+ 184   1          frame[length + 1] = (uint8_t)(crc >> 8);
+ 185   1      
+ 186   1          Board_SetRs485Transmit(port, 1);
+ 187   1          if (port == 1)
+ 188   1          {
+ 189   2              Board_DelayMs(1);
+ 190   2          }
+ 191   1          for (index = 0; index < (uint8_t)(length + 2); index++)
+ 192   1          {
+ 193   2              RS485_SendByte(port, frame[index]);
+ 194   2          }
+ 195   1          Board_DelayMs(2);
+ 196   1          Board_SetRs485Transmit(port, 0);
+ 197   1      }
+ 198          
+ 199          static void RS485_SetRelay(uint8_t index, uint16_t value)
+ 200          {
+ 201   1          if (index >= RELAY_REGISTER_COUNT || value > 1)
+ 202   1          {
+ 203   2              return;
+ 204   2          }
+ 205   1          if (relay_states[index] != (uint8_t)value)
+ 206   1          {
+ 207   2              Board_PulseRelay((uint8_t)(index + 1), (uint8_t)value, 120);
+ 208   2              relay_states[index] = (uint8_t)value;
+ 209   2          }
+ 210   1      }
+ 211          
+ 212          static void Modbus_SendException(uint8_t function, uint8_t exception_code)
+ 213          {
+ 214   1          tx_buffer[0] = CONTROLLER_SLAVE_ID;
+ 215   1          tx_buffer[1] = function | 0x80;
+ 216   1          tx_buffer[2] = exception_code;
+ 217   1          RS485_SendFrame(2, tx_buffer, 3);
+ 218   1      }
+ 219          
+ 220          static void Modbus_HandleSlaveFrame(uint8_t length)
+ 221          {
+ 222   1          uint8_t function;
+ 223   1          uint8_t quantity;
+ 224   1          uint8_t index;
+ 225   1          uint8_t broadcast;
+ 226   1          uint16_t start_address;
+ 227   1          uint16_t value;
+ 228   1          uint16_t write_count;
+ 229   1      
+ 230   1          if (!Modbus_FrameValid(port2_rx_buffer, length))
+ 231   1          {
+ 232   2              return;
+ 233   2          }
+ 234   1          if (port2_rx_buffer[0] != CONTROLLER_SLAVE_ID &&
+ 235   1              port2_rx_buffer[0] != 0)
+ 236   1          {
+ 237   2              return;
+ 238   2          }
+C51 COMPILER V9.60.0.0   RS485_TEST                                                        10/09/2026 16:51:51 PAGE 5   
+
+ 239   1      
+ 240   1          broadcast = (port2_rx_buffer[0] == 0);
+ 241   1          function = port2_rx_buffer[1];
+ 242   1          start_address = ((uint16_t)port2_rx_buffer[2] << 8) |
+ 243   1                          port2_rx_buffer[3];
+ 244   1      
+ 245   1          if (function == 0x03)
+ 246   1          {
+ 247   2              if (length != 8)
+ 248   2              {
+ 249   3                  return;
+ 250   3              }
+ 251   2              if (port2_rx_buffer[4] != 0)
+ 252   2              {
+ 253   3                  if (!broadcast)
+ 254   3                  {
+ 255   4                      Modbus_SendException(function, 0x03);
+ 256   4                  }
+ 257   3                  return;
+ 258   3              }
+ 259   2              quantity = port2_rx_buffer[5];
+ 260   2              if (broadcast)
+ 261   2              {
+ 262   3                  return;
+ 263   3              }
+ 264   2              if (quantity == 0 || quantity > SLAVE_REGISTER_COUNT ||
+ 265   2                  start_address >= SLAVE_REGISTER_COUNT ||
+ 266   2                  (uint16_t)(start_address + quantity) > SLAVE_REGISTER_COUNT)
+ 267   2              {
+ 268   3                  Modbus_SendException(function, 0x02);
+ 269   3                  return;
+ 270   3              }
+ 271   2              tx_buffer[0] = CONTROLLER_SLAVE_ID;
+ 272   2              tx_buffer[1] = function;
+ 273   2              tx_buffer[2] = quantity * 2;
+ 274   2              for (index = 0; index < quantity; index++)
+ 275   2              {
+ 276   3                  if ((start_address + index) < RELAY_REGISTER_COUNT)
+ 277   3                  {
+ 278   4                      value = relay_states[start_address + index];
+ 279   4                  }
+ 280   3                  else
+ 281   3                  {
+ 282   4                      value = meter_registers[
+ 283   4                          start_address + index - RELAY_REGISTER_COUNT];
+ 284   4                  }
+ 285   3                  tx_buffer[3 + (index * 2)] = (uint8_t)(value >> 8);
+ 286   3                  tx_buffer[4 + (index * 2)] = (uint8_t)value;
+ 287   3              }
+ 288   2              RS485_SendFrame(2, tx_buffer, (uint8_t)(3 + quantity * 2));
+ 289   2              return;
+ 290   2          }
+ 291   1      
+ 292   1          if (function == 0x06)
+ 293   1          {
+ 294   2              if (length != 8)
+ 295   2              {
+ 296   3                  return;
+ 297   3              }
+ 298   2              value = ((uint16_t)port2_rx_buffer[4] << 8) | port2_rx_buffer[5];
+ 299   2              if (start_address >= RELAY_REGISTER_COUNT)
+ 300   2              {
+C51 COMPILER V9.60.0.0   RS485_TEST                                                        10/09/2026 16:51:51 PAGE 6   
+
+ 301   3                  if (!broadcast)
+ 302   3                  {
+ 303   4                      Modbus_SendException(function, 0x02);
+ 304   4                  }
+ 305   3                  return;
+ 306   3              }
+ 307   2              if (value > 1)
+ 308   2              {
+ 309   3                  if (!broadcast)
+ 310   3                  {
+ 311   4                      Modbus_SendException(function, 0x03);
+ 312   4                  }
+ 313   3                  return;
+ 314   3              }
+ 315   2              RS485_SetRelay((uint8_t)start_address, value);
+ 316   2              if (!broadcast)
+ 317   2              {
+ 318   3                  RS485_SendFrame(2, port2_rx_buffer, 6);
+ 319   3              }
+ 320   2              return;
+ 321   2          }
+ 322   1      
+ 323   1          if (function == 0x10)
+ 324   1          {
+ 325   2              if (length < 9)
+ 326   2              {
+ 327   3                  return;
+ 328   3              }
+ 329   2              write_count = ((uint16_t)port2_rx_buffer[4] << 8) |
+ 330   2                            port2_rx_buffer[5];
+ 331   2              quantity = port2_rx_buffer[6];
+ 332   2              if (write_count == 0 || write_count > RELAY_REGISTER_COUNT ||
+ 333   2                  quantity != write_count * 2 ||
+ 334   2                  length != (uint8_t)(9 + quantity) ||
+ 335   2                  start_address >= RELAY_REGISTER_COUNT ||
+ 336   2                  (uint16_t)(start_address + write_count) > RELAY_REGISTER_COUNT)
+ 337   2              {
+ 338   3                  if (!broadcast)
+ 339   3                  {
+ 340   4                      Modbus_SendException(function, 0x02);
+ 341   4                  }
+ 342   3                  return;
+ 343   3              }
+ 344   2              for (index = 0; index < (uint8_t)write_count; index++)
+ 345   2              {
+ 346   3                  value = ((uint16_t)port2_rx_buffer[7 + (index * 2)] << 8) |
+ 347   3                          port2_rx_buffer[8 + (index * 2)];
+ 348   3                  if (value > 1)
+ 349   3                  {
+ 350   4                      if (!broadcast)
+ 351   4                      {
+ 352   5                          Modbus_SendException(function, 0x03);
+ 353   5                      }
+ 354   4                      return;
+ 355   4                  }
+ 356   3              }
+ 357   2              for (index = 0; index < (uint8_t)write_count; index++)
+ 358   2              {
+ 359   3                  value = ((uint16_t)port2_rx_buffer[7 + (index * 2)] << 8) |
+ 360   3                          port2_rx_buffer[8 + (index * 2)];
+ 361   3                  RS485_SetRelay((uint8_t)(start_address + index), value);
+ 362   3              }
+C51 COMPILER V9.60.0.0   RS485_TEST                                                        10/09/2026 16:51:51 PAGE 7   
+
+ 363   2              if (!broadcast)
+ 364   2              {
+ 365   3                  tx_buffer[0] = CONTROLLER_SLAVE_ID;
+ 366   3                  tx_buffer[1] = function;
+ 367   3                  tx_buffer[2] = (uint8_t)(start_address >> 8);
+ 368   3                  tx_buffer[3] = (uint8_t)start_address;
+ 369   3                  tx_buffer[4] = (uint8_t)(write_count >> 8);
+ 370   3                  tx_buffer[5] = (uint8_t)write_count;
+ 371   3                  RS485_SendFrame(2, tx_buffer, 6);
+ 372   3              }
+ 373   2              return;
+ 374   2          }
+ 375   1      
+ 376   1          if (!broadcast)
+ 377   1          {
+ 378   2              Modbus_SendException(function, 0x01);
+ 379   2          }
+ 380   1      }
+ 381          
+ 382          static void RS485_StartMeterRead(void)
+ 383          {
+ 384   1          tx_buffer[0] = METER_SLAVE_ID;
+ 385   1          tx_buffer[1] = 0x03;
+ 386   1          tx_buffer[2] = (uint8_t)(METER_REGISTER_START >> 8);
+ 387   1          tx_buffer[3] = (uint8_t)METER_REGISTER_START;
+ 388   1          tx_buffer[4] = 0;
+ 389   1          tx_buffer[5] = METER_REGISTER_COUNT;
+ 390   1          port1_rx_length = 0;
+ 391   1          port1_silence_ms = 0;
+ 392   1          RS485_SendFrame(1, tx_buffer, 6);
+ 393   1          master_waiting = 1;
+ 394   1          master_timeout_ms = 0;
+ 395   1      }
+ 396          
+ 397          static void RS485_HandleMeterResponse(uint8_t length)
+ 398          {
+ 399   1          uint8_t index;
+ 400   1          uint8_t expected_length;
+ 401   1      
+ 402   1          if (!master_waiting ||
+ 403   1              !Modbus_FrameValid(port1_rx_buffer, length) ||
+ 404   1              port1_rx_buffer[0] != METER_SLAVE_ID)
+ 405   1          {
+ 406   2              return;
+ 407   2          }
+ 408   1          if (port1_rx_buffer[1] & 0x80)
+ 409   1          {
+ 410   2              meter_data_valid = 0;
+ 411   2              RS485_ClearMeterRegisters();
+ 412   2              master_waiting = 0;
+ 413   2              return;
+ 414   2          }
+ 415   1          expected_length = (uint8_t)(5 + METER_REGISTER_COUNT * 2);
+ 416   1          if (port1_rx_buffer[1] != 0x03 ||
+ 417   1              port1_rx_buffer[2] != (METER_REGISTER_COUNT * 2) ||
+ 418   1              length != expected_length)
+ 419   1          {
+ 420   2              meter_data_valid = 0;
+ 421   2              RS485_ClearMeterRegisters();
+ 422   2              master_waiting = 0;
+ 423   2              return;
+ 424   2          }
+C51 COMPILER V9.60.0.0   RS485_TEST                                                        10/09/2026 16:51:51 PAGE 8   
+
+ 425   1          for (index = 0; index < METER_REGISTER_COUNT; index++)
+ 426   1          {
+ 427   2              meter_registers[index] =
+ 428   2                  ((uint16_t)port1_rx_buffer[3 + (index * 2)] << 8) |
+ 429   2                  port1_rx_buffer[4 + (index * 2)];
+ 430   2          }
+ 431   1          meter_data_valid = 1;
+ 432   1          master_waiting = 0;
+ 433   1      }
+ 434          
+ 435          void RS485_TestInit(void)
+ 436          {
+ 437   1          uint8_t index;
+ 438   1      
+ 439   1          IE &= 0x7F;
+ 440   1          P37_QUASI_MODE;
+ 441   1          P36_INPUT_MODE;
+ 442   1          P06_QUASI_MODE;
+ 443   1          P07_INPUT_MODE;
+ 444   1          SFRS = 0;
+ 445   1          UART_Open(24000000UL, UART1_Timer3, METER_BAUD_RATE);
+ 446   1          UART_Open(24000000UL, UART0_Timer1, METER_BAUD_RATE);
+ 447   1      
+ 448   1          /* Mode 3 sends 8 data bits plus a manually generated even-parity bit. */
+ 449   1          SCON_1 = 0xD0;
+ 450   1          SCON = 0xD0;
+ 451   1          TI_1 = 0;
+ 452   1          TI = 0;
+ 453   1          RI_1 = 0;
+ 454   1          RI = 0;
+ 455   1          port1_rx_count = 0;
+ 456   1          port2_rx_count = 0;
+ 457   1          port1_tx_complete = 0;
+ 458   1          port2_tx_complete = 0;
+ 459   1          Board_SetRs485Transmit(1, 0);
+ 460   1          Board_SetRs485Transmit(2, 0);
+ 461   1          Board_SetLed(1, 0);
+ 462   1          Board_SetLed(2, 0);
+ 463   1      
+ 464   1          for (index = 0; index < METER_REGISTER_COUNT; index++)
+ 465   1          {
+ 466   2              meter_registers[index] = 0;
+ 467   2          }
+ 468   1          for (index = 0; index < RELAY_REGISTER_COUNT; index++)
+ 469   1          {
+ 470   2              relay_states[index] = 0;
+ 471   2              Board_PulseRelay((uint8_t)(index + 1), 0, 120);
+ 472   2          }
+ 473   1          port1_rx_length = 0;
+ 474   1          port2_rx_length = 0;
+ 475   1          port1_silence_ms = 0;
+ 476   1          port2_silence_ms = 0;
+ 477   1          master_waiting = 0;
+ 478   1          master_timer_ms = MASTER_POLL_INTERVAL_MS;
+ 479   1          master_timeout_ms = 0;
+ 480   1          meter_data_valid = 0;
+ 481   1          EA = 1;
+ 482   1      }
+ 483          
+ 484          void RS485_Poll(RS485_TestResult *result)
+ 485          {
+ 486   1          uint8_t frame_length;
+C51 COMPILER V9.60.0.0   RS485_TEST                                                        10/09/2026 16:51:51 PAGE 9   
+
+ 487   1          uint8_t global_interrupt_enabled;
+ 488   1      
+ 489   1          SFRS = 0;
+ 490   1          if (port1_rx_length != 0 && port1_silence_ms >= RTU_FRAME_GAP_MS)
+ 491   1          {
+ 492   2              global_interrupt_enabled = EA;
+ 493   2              EA = 0;
+ 494   2              frame_length = port1_rx_length;
+ 495   2              port1_rx_length = 0;
+ 496   2              EA = global_interrupt_enabled;
+ 497   2              RS485_HandleMeterResponse(frame_length);
+ 498   2          }
+ 499   1          if (port2_rx_length != 0 && port2_silence_ms >= RTU_FRAME_GAP_MS)
+ 500   1          {
+ 501   2              global_interrupt_enabled = EA;
+ 502   2              EA = 0;
+ 503   2              frame_length = port2_rx_length;
+ 504   2              port2_rx_length = 0;
+ 505   2              EA = global_interrupt_enabled;
+ 506   2              Modbus_HandleSlaveFrame(frame_length);
+ 507   2          }
+ 508   1      
+ 509   1          if (master_waiting)
+ 510   1          {
+ 511   2              if (master_timeout_ms < MASTER_TIMEOUT_MS)
+ 512   2              {
+ 513   3                  master_timeout_ms++;
+ 514   3              }
+ 515   2              else
+ 516   2              {
+ 517   3                  master_waiting = 0;
+ 518   3                  port1_rx_length = 0;
+ 519   3                  meter_data_valid = 0;
+ 520   3                  RS485_ClearMeterRegisters();
+ 521   3              }
+ 522   2          }
+ 523   1          else if (master_timer_ms < MASTER_POLL_INTERVAL_MS)
+ 524   1          {
+ 525   2              master_timer_ms++;
+ 526   2          }
+ 527   1          else
+ 528   1          {
+ 529   2              master_timer_ms = 0;
+ 530   2              RS485_StartMeterRead();
+ 531   2          }
+ 532   1      
+ 533   1          if (port1_silence_ms < RTU_FRAME_GAP_MS)
+ 534   1          {
+ 535   2              port1_silence_ms++;
+ 536   2          }
+ 537   1          if (port2_silence_ms < RTU_FRAME_GAP_MS)
+ 538   1          {
+ 539   2              port2_silence_ms++;
+ 540   2          }
+ 541   1      
+ 542   1          result->last_port = 0;
+ 543   1          result->last_byte = 0;
+ 544   1          result->port1_rx_count = port1_rx_count;
+ 545   1          result->port2_rx_count = port2_rx_count;
+ 546   1      }
+ 547          
+ 548          uint16_t RS485_GetMeterRegister(uint8_t zero_based_address)
+C51 COMPILER V9.60.0.0   RS485_TEST                                                        10/09/2026 16:51:51 PAGE 10  
+
+ 549          {
+ 550   1          if (zero_based_address >= METER_REGISTER_COUNT)
+ 551   1          {
+ 552   2              return 0;
+ 553   2          }
+ 554   1          return meter_registers[zero_based_address];
+ 555   1      }
+ 556          
+ 557          uint8_t RS485_IsMeterDataValid(void)
+ 558          {
+ 559   1          return meter_data_valid;
+ 560   1      }
+ 561          
+ 562          uint8_t RS485_GetRelayState(uint8_t relay)
+ 563          {
+ 564   1          if (relay == 0 || relay > RELAY_REGISTER_COUNT)
+ 565   1          {
+ 566   2              return 0;
+ 567   2          }
+ 568   1          return relay_states[relay - 1];
+ 569   1      }
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =   2569    ----
+   CONSTANT SIZE    =   ----    ----
+   XDATA SIZE       =    181      31
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =   ----    ----
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)

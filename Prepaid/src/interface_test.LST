@@ -1,0 +1,128 @@
+C51 COMPILER V9.60.0.0   INTERFACE_TEST                                                    10/09/2026 16:51:50 PAGE 1   
+
+
+C51 COMPILER V9.60.0.0, COMPILATION OF MODULE INTERFACE_TEST
+OBJECT MODULE PLACED IN C:\Users\Dinesh\.copilot\session-state\48682e31-b259-4d1f-8ab3-35f8af34aec9\files\modbus-check\interface_test.obj
+COMPILER INVOKED BY: D:\Applications\C51\BIN\C51.exe src\interface_test.c INCDIR(src;vendor\MS51_BSP\MS51FC0AE_MS51XC0BE
+                    -_MS51EB0AE_MS51EC0AE_MS51TC0AE_MS51PC0AE\Library\Device\Include;vendor\MS51_BSP\MS51FC0AE_MS51XC0BE_MS51EB0AE_MS51EC0AE_
+                    -MS51TC0AE_MS51PC0AE\Library\StdDriver\inc) LARGE OBJECT(C:\Users\Dinesh\.copilot\session-state\48682e31-b259-4d1f-8ab3-3
+                    -5f8af34aec9\files\modbus-check\interface_test.obj)
+
+line level    source
+
+   1          #include "interface_test.h"
+   2          #include "board_io.h"
+   3          #include "i2c_probe.h"
+   4          #include "lcd_595.h"
+   5          #include "rs485_test.h"
+   6          
+   7          static I2C_TestResult i2c_result;
+   8          static RS485_TestResult rs485_result;
+   9          static uint8_t previous_key_3;
+  10          static uint8_t screen_page;
+  11          static uint16_t screen_timer;
+  12          
+  13          static void InterfaceTest_ShowStatus(void)
+  14          {
+  15   1          uint16_t meter_value;
+  16   1      
+  17   1          LCD_SetCursor(0, 0);
+  18   1          LCD_WriteText("40008:");
+  19   1          if (RS485_IsMeterDataValid())
+  20   1          {
+  21   2              meter_value = RS485_GetMeterRegister(0);
+  22   2              LCD_WriteHex((uint8_t)(meter_value >> 8));
+  23   2              LCD_WriteHex((uint8_t)meter_value);
+  24   2              LCD_WriteText(" OK ");
+  25   2          }
+  26   1          else
+  27   1          {
+  28   2              LCD_WriteText("---- WAIT");
+  29   2          }
+  30   1      
+  31   1          LCD_SetCursor(1, 0);
+  32   1          LCD_WriteText("RLY1=");
+  33   1          LCD_WriteChar(RS485_GetRelayState(1) ? '1' : '0');
+  34   1          LCD_WriteText(" 2=");
+  35   1          LCD_WriteChar(RS485_GetRelayState(2) ? '1' : '0');
+  36   1          LCD_WriteText(" 3=");
+  37   1          LCD_WriteChar(RS485_GetRelayState(3) ? '1' : '0');
+  38   1      }
+  39          
+  40          void InterfaceTest_Init(void)
+  41          {
+  42   1          previous_key_3 = 0;
+  43   1          screen_page = 0;
+  44   1          screen_timer = 0;
+  45   1          rs485_result.port1_rx_count = 0;
+  46   1          rs485_result.port2_rx_count = 0;
+  47   1          rs485_result.last_port = 0;
+  48   1          rs485_result.last_byte = 0;
+  49   1      
+  50   1          LCD_SetCursor(0, 0);
+  51   1          LCD_WriteText("PREPAID IF TEST ");
+  52   1          LCD_SetCursor(1, 0);
+C51 COMPILER V9.60.0.0   INTERFACE_TEST                                                    10/09/2026 16:51:50 PAGE 2   
+
+  53   1          LCD_WriteText("MS51PC0AE        ");
+  54   1      
+  55   1          I2C_RunReadOnlyTests(&i2c_result);
+  56   1      
+  57   1          LCD_Command(0x01);
+  58   1          InterfaceTest_ShowStatus();
+  59   1      }
+  60          
+  61          void InterfaceTest_Poll(void)
+  62          {
+  63   1          uint8_t key_3;
+  64   1      
+  65   1          RS485_Poll(&rs485_result);
+  66   1          Board_SetLed(1, RS485_IsMeterDataValid());
+  67   1          Board_SetLed(2, RS485_IsMeterDataValid());
+  68   1          key_3 = Board_KeyPressed(3);
+  69   1      
+  70   1          if (key_3 && !previous_key_3)
+  71   1          {
+  72   2              screen_page ^= 1;
+  73   2          }
+  74   1      
+  75   1          previous_key_3 = key_3;
+  76   1      
+  77   1          if (screen_timer >= 500)
+  78   1          {
+  79   2              screen_timer = 0;
+  80   2              if (screen_page == 0)
+  81   2              {
+  82   3                  InterfaceTest_ShowStatus();
+  83   3              }
+  84   2              else
+  85   2              {
+  86   3                  LCD_SetCursor(0, 0);
+  87   3                  LCD_WriteText("RTC:");
+  88   3                  LCD_WriteChar(i2c_result.rtc_read_ok ? 'Y' : 'N');
+  89   3                  LCD_WriteText(" EE:");
+  90   3                  LCD_WriteChar(i2c_result.eeprom_read_ok ? 'Y' : 'N');
+  91   3                  LCD_SetCursor(1, 0);
+  92   3                  LCD_WriteText("IR:");
+  93   3                  LCD_WriteChar(Board_IrActive() ? '1' : '0');
+  94   3                  LCD_WriteText(" RS1:MASTER");
+  95   3              }
+  96   2          }
+  97   1      
+  98   1          Board_DelayMs(1);
+  99   1          screen_timer++;
+ 100   1      }
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =    400    ----
+   CONSTANT SIZE    =     97    ----
+   XDATA SIZE       =     14       2
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =   ----    ----
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)

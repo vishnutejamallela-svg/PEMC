@@ -1,0 +1,184 @@
+C51 COMPILER V9.60.0.0   I2C_PROBE                                                         10/09/2026 16:51:50 PAGE 1   
+
+
+C51 COMPILER V9.60.0.0, COMPILATION OF MODULE I2C_PROBE
+OBJECT MODULE PLACED IN C:\Users\Dinesh\.copilot\session-state\48682e31-b259-4d1f-8ab3-35f8af34aec9\files\modbus-check\i2c_probe.obj
+COMPILER INVOKED BY: D:\Applications\C51\BIN\C51.exe src\i2c_probe.c INCDIR(src;vendor\MS51_BSP\MS51FC0AE_MS51XC0BE_MS51
+                    -EB0AE_MS51EC0AE_MS51TC0AE_MS51PC0AE\Library\Device\Include;vendor\MS51_BSP\MS51FC0AE_MS51XC0BE_MS51EB0AE_MS51EC0AE_MS51T
+                    -C0AE_MS51PC0AE\Library\StdDriver\inc) LARGE OBJECT(C:\Users\Dinesh\.copilot\session-state\48682e31-b259-4d1f-8ab3-35f8af
+                    -34aec9\files\modbus-check\i2c_probe.obj)
+
+line level    source
+
+   1          #include "i2c_probe.h"
+   2          
+   3          #define I2C_SI       0x08
+   4          #define I2C_STO      0x10
+   5          #define I2C_STA      0x20
+   6          #define I2C_ENABLE   0x40
+   7          #define EEPROM_ADDR  0x50
+   8          #define RTC_ADDR     0x51
+   9          
+  10          static uint8_t I2C_WaitComplete(void)
+  11          {
+  12   1          uint16_t timeout;
+  13   1      
+  14   1          timeout = 0;
+  15   1          while ((I2CON & I2C_SI) == 0)
+  16   1          {
+  17   2              timeout++;
+  18   2              if (timeout == 0) return 0;
+  19   2          }
+  20   1          return 1;
+  21   1      }
+  22          
+  23          static uint8_t I2C_Start(void)
+  24          {
+  25   1          SFRS = 0;
+  26   1          I2CON |= I2C_STA;
+  27   1          I2CON &= (uint8_t)~I2C_SI;
+  28   1          if (!I2C_WaitComplete()) return 0;
+  29   1          if (I2STAT != 0x08 && I2STAT != 0x10) return 0;
+  30   1          I2CON &= (uint8_t)~I2C_STA;
+  31   1          return 1;
+  32   1      }
+  33          
+  34          static uint8_t I2C_Write(uint8_t value, uint8_t expected_status)
+  35          {
+  36   1          I2DAT = value;
+  37   1          I2CON &= (uint8_t)~I2C_SI;
+  38   1          if (!I2C_WaitComplete()) return 0;
+  39   1          return (I2STAT == expected_status);
+  40   1      }
+  41          
+  42          static uint8_t I2C_Read(uint8_t acknowledge, uint8_t *value)
+  43          {
+  44   1          if (acknowledge) I2CON |= 0x04;
+  45   1          else I2CON &= (uint8_t)~0x04;
+  46   1      
+  47   1          I2CON &= (uint8_t)~I2C_SI;
+  48   1          if (!I2C_WaitComplete()) return 0;
+  49   1          if (acknowledge && I2STAT != 0x50) return 0;
+  50   1          if (!acknowledge && I2STAT != 0x58) return 0;
+  51   1          *value = I2DAT;
+  52   1          return 1;
+C51 COMPILER V9.60.0.0   I2C_PROBE                                                         10/09/2026 16:51:50 PAGE 2   
+
+  53   1      }
+  54          
+  55          static uint8_t I2C_Stop(void)
+  56          {
+  57   1          uint16_t timeout;
+  58   1      
+  59   1          SFRS = 0;
+  60   1          I2CON |= I2C_STO;
+  61   1          I2CON &= (uint8_t)~I2C_SI;
+  62   1          timeout = 0;
+  63   1          while (I2CON & I2C_STO)
+  64   1          {
+  65   2              timeout++;
+  66   2              if (timeout == 0) return 0;
+  67   2          }
+  68   1          return 1;
+  69   1      }
+  70          
+  71          static uint8_t I2C_Probe(uint8_t address)
+  72          {
+  73   1          uint8_t acknowledged;
+  74   1      
+  75   1          acknowledged = 0;
+  76   1          if (I2C_Start())
+  77   1          {
+  78   2              acknowledged = I2C_Write((uint8_t)(address << 1), 0x18);
+  79   2          }
+  80   1          return (uint8_t)(I2C_Stop() && acknowledged);
+  81   1      }
+  82          
+  83          static uint8_t I2C_ReadRegister(uint8_t address, uint8_t register_address,
+  84                                          uint8_t *buffer, uint8_t length)
+  85          {
+  86   1          uint8_t index;
+  87   1      
+  88   1          if (length == 0) return 0;
+  89   1          if (!I2C_Start()) goto read_error;
+  90   1          if (!I2C_Write((uint8_t)(address << 1), 0x18)) goto read_error;
+  91   1          if (!I2C_Write(register_address, 0x28)) goto read_error;
+  92   1          if (!I2C_Start()) goto read_error;
+  93   1          if (!I2C_Write((uint8_t)((address << 1) | 1), 0x40)) goto read_error;
+  94   1      
+  95   1          for (index = 0; index < length; index++)
+  96   1          {
+  97   2              if (!I2C_Read(index + 1 < length, &buffer[index])) goto read_error;
+  98   2          }
+  99   1          return I2C_Stop();
+ 100   1      
+ 101   1      read_error:
+ 102   1          I2C_Stop();
+ 103   1          return 0;
+ 104   1      }
+ 105          
+ 106          static uint8_t I2C_ReadEEPROMByte(uint8_t *value)
+ 107          {
+ 108   1          if (!I2C_Start()) goto eeprom_error;
+ 109   1          if (!I2C_Write((uint8_t)(EEPROM_ADDR << 1), 0x18)) goto eeprom_error;
+ 110   1          if (!I2C_Write(0x00, 0x28)) goto eeprom_error;
+ 111   1          if (!I2C_Write(0x00, 0x28)) goto eeprom_error;
+ 112   1          if (!I2C_Start()) goto eeprom_error;
+ 113   1          if (!I2C_Write((uint8_t)((EEPROM_ADDR << 1) | 1), 0x40)) goto eeprom_error;
+ 114   1          if (!I2C_Read(0, value)) goto eeprom_error;
+C51 COMPILER V9.60.0.0   I2C_PROBE                                                         10/09/2026 16:51:50 PAGE 3   
+
+ 115   1          return I2C_Stop();
+ 116   1      
+ 117   1      eeprom_error:
+ 118   1          I2C_Stop();
+ 119   1          return 0;
+ 120   1      }
+ 121          
+ 122          void I2C_TestInit(void)
+ 123          {
+ 124   1          SFRS = 0;
+ 125   1          P13_OPENDRAIN_MODE;
+ 126   1          P14_OPENDRAIN_MODE;
+ 127   1          P1 |= 0x18;
+ 128   1          I2CLK = 59;
+ 129   1          I2CON = I2C_ENABLE;
+ 130   1      }
+ 131          
+ 132          void I2C_RunReadOnlyTests(I2C_TestResult *result)
+ 133          {
+ 134   1          uint8_t rtc_data[7];
+ 135   1      
+ 136   1          result->eeprom_present = I2C_Probe(EEPROM_ADDR);
+ 137   1          result->rtc_present = I2C_Probe(RTC_ADDR);
+ 138   1          result->eeprom_read_ok = 0;
+ 139   1          result->rtc_read_ok = 0;
+ 140   1          result->eeprom_first_byte = 0;
+ 141   1          result->rtc_seconds = 0;
+ 142   1      
+ 143   1          if (result->eeprom_present &&
+ 144   1              I2C_ReadEEPROMByte(&result->eeprom_first_byte))
+ 145   1          {
+ 146   2              result->eeprom_read_ok = 1;
+ 147   2          }
+ 148   1      
+ 149   1          if (result->rtc_present && I2C_ReadRegister(RTC_ADDR, 0x02, rtc_data, 7))
+ 150   1          {
+ 151   2              result->rtc_seconds = (uint8_t)(rtc_data[0] & 0x7F);
+ 152   2              result->rtc_read_ok = 1;
+ 153   2          }
+ 154   1      }
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =    675    ----
+   CONSTANT SIZE    =   ----    ----
+   XDATA SIZE       =   ----      17
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =   ----    ----
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)

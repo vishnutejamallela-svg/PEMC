@@ -1,0 +1,48 @@
+C51 COMPILER V9.60.0.0   MAIN                                                              10/16/2026 10:05:22 PAGE 1   
+
+
+C51 COMPILER V9.60.0.0, COMPILATION OF MODULE MAIN
+OBJECT MODULE PLACED IN .\Output\main.obj
+COMPILER INVOKED BY: C:\Keil_v5\C51\BIN\C51.EXE src\main.c LARGE OMF2 OPTIMIZE(7,SPEED) BROWSE INCDIR(.\src;vendor\MS51_
+                    -BSP\MS51FC0AE_MS51XC0BE_MS51EB0AE_MS51EC0AE_MS51TC0AE_MS51PC0AE\Library\Device\Include;vendor\MS51_BSP\MS51FC0AE_MS51XC0
+                    -BE_MS51EB0AE_MS51EC0AE_MS51TC0AE_MS51PC0AE\Library\StdDriver\inc) DEBUG PRINT(.\lst\main.lst) TABS(2) OBJECT(.\Output\ma
+                    -in.obj)
+
+line level    source
+
+   1          #include "ms51_device.h"
+   2          #include "sys.h"
+   3          #include "board_io.h"
+   4          #include "rs485_test.h"
+   5          
+   6          void main(void)
+   7          {
+   8   1          MODIFY_HIRC(HIRC_24);
+   9   1          SFRS = 0;
+  10   1          Board_Init();
+  11   1          RS485_TestInit();
+  12   1      
+  13   1          while (1)
+  14   1          {
+  15   2              RS485_Poll();
+  16   2              Board_DelayMs(1);
+  17   2          }
+  18   1      }
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =     27    ----
+   CONSTANT SIZE    =   ----    ----
+   XDATA SIZE       =   ----    ----
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =   ----    ----
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =   ----    ----
+   EDATA SIZE       =   ----    ----
+   HDATA SIZE       =   ----    ----
+   XDATA CONST SIZE =   ----    ----
+   FAR CONST SIZE   =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)

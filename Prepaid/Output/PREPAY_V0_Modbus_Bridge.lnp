@@ -1,0 +1,12 @@
+".\Output\main.obj",
+".\Output\board_io.obj",
+".\Output\rs485_test.obj",
+".\Output\common.obj",
+".\Output\sys.obj",
+".\Output\uart.obj",
+".\Output\delay.obj",
+".\Output\STARTUP.obj" 
+TO ".\Output\PREPAY_V0_Modbus_Bridge" 
+
+PRINT(".\lst\PREPAY_V0_Modbus_Bridge.map") DISABLEWARNING (16) 
+REMOVEUNUSED 

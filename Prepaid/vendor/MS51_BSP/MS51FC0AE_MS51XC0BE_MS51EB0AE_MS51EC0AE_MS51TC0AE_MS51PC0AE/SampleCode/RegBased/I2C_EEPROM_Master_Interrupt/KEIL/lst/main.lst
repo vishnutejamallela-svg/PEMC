@@ -1,0 +1,300 @@
+C51 COMPILER V9.60.0.0   MAIN                                                              10/08/2026 19:00:00 PAGE 1   
+
+
+C51 COMPILER V9.60.0.0, COMPILATION OF MODULE MAIN
+OBJECT MODULE PLACED IN .\Output\main.obj
+COMPILER INVOKED BY: D:\Applications\C51\BIN\C51.EXE ..\main.c LARGE OMF2 OPTIMIZE(7,SPEED) BROWSE INCDIR(..\..\..\..\Li
+                    -brary\Device\Include;..\..\..\..\Library\StdDriver\inc) DEBUG PRINT(.\lst\main.lst) TABS(2) OBJECT(.\Output\main.obj)
+
+line level    source
+
+   1          /*--------------------------------------------------------------------------------------------------------
+             --*/
+   2          /*                                                                                                        
+             - */
+   3          /* SPDX-License-Identifier: Apache-2.0                                                                    
+             - */
+   4          /* Copyright(c) 2024 Nuvoton Technology Corp. All rights reserved.                                        
+             - */
+   5          /*                                                                                                        
+             - */
+   6          /*--------------------------------------------------------------------------------------------------------
+             --*/
+   7          #include "numicro_8051.h"
+   8          
+   9          #define EEPROM_ADDRESS          0xA0
+  10          #define I2C_WR                     0
+  11          #define I2C_RD                     1
+  12          
+  13          #define LOOP_SIZE                 10
+  14          
+  15          uint16_t Tx_Addr, Rx_Addr;
+  16          uint8_t Tx_Dat, Rx_Dat;
+  17          BIT Write_End_Flag, Read_End_Flag, addr_flag;
+  18          
+  19          void (*I2C_Func)(void);
+  20          
+  21          #if defined __C51__
+  22          void I2C_ISR(void) interrupt 6
+  23          #elif defined __ICC8051__
+              #pragma vector=0x33
+              __interrupt void I2C_ISR(void)
+              #elif defined __SDCC__
+              void I2C_ISR(void) __interrupt (6)        // Vector @  0x33
+              #endif
+  29          {
+  30   1          I2C_Func();
+  31   1      }
+  32          
+  33          /*========================================================================================================
+             -*/
+  34          void I2C0_Master_Tx_Isr(void)
+  35          {
+  36   1          static uint8_t addr_flag;
+  37   1          static uint8_t count;
+  38   1      
+  39   1          PUSH_SFRS;
+  40   1          SFRS = 0;
+  41   1        
+  42   1        /* Bus error */
+  43   1          if (I2STAT == 0x00)
+  44   1          {
+  45   2             set_I2CON_STO;
+  46   2          }
+  47   1      
+C51 COMPILER V9.60.0.0   MAIN                                                              10/08/2026 19:00:00 PAGE 2   
+
+  48   1        /* I2C start */    
+  49   1          else if (I2STAT == 0x08)
+  50   1          {
+  51   2              clr_I2CON_STA;
+  52   2              I2DAT = (EEPROM_ADDRESS | I2C_WR);
+  53   2          }
+  54   1      
+  55   1        /* Master Transmit Address ACK  */
+  56   1          else if (I2STAT == 0x18)
+  57   1          {
+  58   2              I2DAT = HIBYTE(Rx_Addr);          //address high byte of I2C EEPROM
+  59   2              addr_flag = 1;
+  60   2          }
+  61   1      
+  62   1         /* Master Transmit Data ACK  */
+  63   1          else if (I2STAT == 0x28)
+  64   1          {
+  65   2              if(addr_flag)
+  66   2              {
+  67   3                   I2DAT = LOBYTE(Tx_Addr);      //address low byte of I2C EEPROM
+  68   3                   addr_flag = 0;
+  69   3                   count = 0;
+  70   3              }
+  71   2              else
+  72   2              {
+  73   3                   if(count == 0)
+  74   3                   {
+  75   4                        I2DAT = Tx_Dat;
+  76   4                        count++;
+  77   4                   }
+  78   3                   else
+  79   3                   {
+  80   4                        Write_End_Flag = 1;
+  81   4                        set_I2CON_STO;
+  82   4                   }
+  83   3              }
+  84   2          }
+  85   1      
+  86   1          I2C0_SI_Check();
+  87   1          POP_SFRS;
+  88   1      }
+  89          
+  90          /*========================================================================================================
+             -*/
+  91          void I2C0_Master_Rx_Isr(void)
+  92          {
+  93   1      
+  94   1      
+  95   1          PUSH_SFRS;
+  96   1      
+  97   1          SFRS = 0;
+  98   1          switch (I2STAT)
+  99   1          {
+ 100   2             /* Bus error */
+ 101   2             case 0x00: set_I2CON_STO; break;
+ 102   2      
+ 103   2            /* I2C start */
+ 104   2             case 0x08:
+ 105   2                  clr_I2CON_STA;
+ 106   2                  I2DAT = (EEPROM_ADDRESS | I2C_WR);
+ 107   2             break;
+ 108   2      
+C51 COMPILER V9.60.0.0   MAIN                                                              10/08/2026 19:00:00 PAGE 3   
+
+ 109   2             /* Master Transmit Address ACK  */
+ 110   2             case 0x18:
+ 111   2                  I2DAT = HIBYTE(Rx_Addr);          //address high byte of I2C EEPROM
+ 112   2                  addr_flag = 1;
+ 113   2             break;
+ 114   2      
+ 115   2             /* Master Transmit Data ACK */ 
+ 116   2             case 0x28:
+ 117   2                  if(addr_flag==1)
+ 118   2                  {
+ 119   3                      I2DAT = LOBYTE(Rx_Addr);       //address low byte of I2C EEPROM
+ 120   3                      addr_flag = 0;
+ 121   3                  }
+ 122   2                  else
+ 123   2                  {
+ 124   3                      set_I2CON_STA;
+ 125   3                  }
+ 126   2             break;  
+ 127   2      
+ 128   2             /* Master Repeat Start  */
+ 129   2             case 0x10: 
+ 130   2                 clr_I2CON_STA;
+ 131   2                 I2DAT = (EEPROM_ADDRESS | I2C_RD);
+ 132   2             break;
+ 133   2      
+ 134   2            /* Master Receive Address ACK  */
+ 135   2             case 0x40:  set_I2CON_AA; break;
+ 136   2             
+ 137   2            /* Master Receive Data ACK  */
+ 138   2             case 0x50:
+ 139   2                  Rx_Dat = I2DAT;
+ 140   2                  set_I2CON_STO;
+ 141   2                  Read_End_Flag = 1;
+ 142   2             break;
+ 143   2          }
+ 144   1      
+ 145   1          I2C0_SI_Check();
+ 146   1      
+ 147   1      POP_SFRS;
+ 148   1      }
+ 149          
+ 150          
+ 151          //========================================================================================================
+ 152          uint8_t I2C0_Write(uint16_t u16I2Caddr, uint8_t u8I2Cdat)
+ 153          {
+ 154   1          uint32_t count = 0;
+ 155   1      
+ 156   1          I2C_Func = I2C0_Master_Tx_Isr;
+ 157   1          Tx_Addr = u16I2Caddr;
+ 158   1          Tx_Dat = u8I2Cdat;
+ 159   1      
+ 160   1          set_I2CON_STA;             /* Start transmit */
+ 161   1          while(1)
+ 162   1          {
+ 163   2              count++;
+ 164   2              if(Write_End_Flag == 1)
+ 165   2              {
+ 166   3                  return 1;
+ 167   3              }
+ 168   2              
+ 169   2              if(count > 100000)
+ 170   2              {
+C51 COMPILER V9.60.0.0   MAIN                                                              10/08/2026 19:00:00 PAGE 4   
+
+ 171   3                  return 0;
+ 172   3              }
+ 173   2          }
+ 174   1      }
+ 175          
+ 176          /*========================================================================================================
+             -*/
+ 177          uint8_t I2C0_Read(uint16_t u8I2Caddr, uint8_t *u8I2Cdat)
+ 178          {
+ 179   1          uint32_t count;
+ 180   1          count = 0;
+ 181   1          Read_End_Flag = 0;
+ 182   1          I2C_Func = I2C0_Master_Rx_Isr;
+ 183   1          Rx_Addr = u8I2Caddr;
+ 184   1        
+ 185   1          SFRS=0; printf ("\n Receive data from n24LC64" );
+ 186   1          set_I2CON_STA; 
+ 187   1          
+ 188   1          while(1)
+ 189   1          {
+ 190   2              count++;
+ 191   2              if(Read_End_Flag == 1)
+ 192   2              {
+ 193   3                  *u8I2Cdat = Rx_Dat;
+ 194   3                  return 1;
+ 195   3              }
+ 196   2              
+ 197   2              if(count > 100000)
+ 198   2              {
+ 199   3                  return 0;
+ 200   3              }
+ 201   2          }
+ 202   1      }
+ 203          /*========================================================================================================
+             -*/
+ 204          void Init_I2C(void)
+ 205          {
+ 206   1      
+ 207   1          MODIFY_HIRC(HIRC_24);
+ 208   1      
+ 209   1          /* Set I2C GPIO */
+ 210   1          P13_OPENDRAIN_MODE;          /* External pull high resister in circuit */
+ 211   1          P14_OPENDRAIN_MODE;          /* External pull high resister in circuit */
+ 212   1          set_P1S_3;                   /* Setting schmit tigger mode */
+ 213   1          set_P1S_4;                   /* Setting schmit tigger mode */
+ 214   1      
+ 215   1          /* Set I2C clock rate and enable, base on 24M i2c clock is 100k */
+ 216   1           I2C_Master_Open(24000000,100000);
+ 217   1          /* Set I2C Interrupt enable*/
+ 218   1           I2C_Interrupt(ENABLE);
+ 219   1           EA=1;
+ 220   1      }
+ 221          
+ 222          /*========================================================================================================
+             -*/
+ 223          void main(void)
+ 224          {
+ 225   1          uint8_t dat;
+ 226   1      
+ 227   1          MODIFY_HIRC(HIRC_24);
+ 228   1          Enable_UART0_VCOM_printf_24M_115200();
+ 229   1          printf("\n I2C EEPROM intial...");
+C51 COMPILER V9.60.0.0   MAIN                                                              10/08/2026 19:00:00 PAGE 5   
+
+ 230   1          Init_I2C();  
+ 231   1      
+ 232   1              if(I2C0_Write(0x0000, 0x55) == 1)
+ 233   1              {
+ 234   2                  Timer0_Delay(24000000,5,1000);
+ 235   2                  if(I2C0_Read(0x0000, &dat) == 1)
+ 236   2                  {
+ 237   3                      if(dat == 0x55)
+ 238   3                      {
+ 239   4                          SFRS=0; printf("\n EEPROM write and read Pass! ");
+ 240   4                      }
+ 241   3                      else
+ 242   3                      {
+ 243   4                          printf("\n FAIL! ");
+ 244   4                      }
+ 245   3                  }
+ 246   2              }
+ 247   1      
+ 248   1              I2C_Close(); 
+ 249   1      
+ 250   1              while(1);
+ 251   1      
+ 252   1      }
+ 253          
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =    755    ----
+   CONSTANT SIZE    =     91    ----
+   XDATA SIZE       =     11      17
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =   ----    ----
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =      3    ----
+   EDATA SIZE       =   ----    ----
+   HDATA SIZE       =   ----    ----
+   XDATA CONST SIZE =   ----    ----
+   FAR CONST SIZE   =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)

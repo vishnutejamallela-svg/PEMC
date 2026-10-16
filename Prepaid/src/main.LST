@@ -1,0 +1,49 @@
+C51 COMPILER V9.60.0.0   MAIN                                                              10/09/2026 16:51:49 PAGE 1   
+
+
+C51 COMPILER V9.60.0.0, COMPILATION OF MODULE MAIN
+OBJECT MODULE PLACED IN C:\Users\Dinesh\.copilot\session-state\48682e31-b259-4d1f-8ab3-35f8af34aec9\files\modbus-check\main.obj
+COMPILER INVOKED BY: D:\Applications\C51\BIN\C51.exe src\main.c INCDIR(src;vendor\MS51_BSP\MS51FC0AE_MS51XC0BE_MS51EB0AE
+                    -_MS51EC0AE_MS51TC0AE_MS51PC0AE\Library\Device\Include;vendor\MS51_BSP\MS51FC0AE_MS51XC0BE_MS51EB0AE_MS51EC0AE_MS51TC0AE_
+                    -MS51PC0AE\Library\StdDriver\inc) LARGE OBJECT(C:\Users\Dinesh\.copilot\session-state\48682e31-b259-4d1f-8ab3-35f8af34aec
+                    -9\files\modbus-check\main.obj)
+
+line level    source
+
+   1          #include "ms51_device.h"
+   2          #include "sys.h"
+   3          #include "board_io.h"
+   4          #include "i2c_probe.h"
+   5          #include "interface_test.h"
+   6          #include "lcd_595.h"
+   7          #include "rs485_test.h"
+   8          
+   9          void main(void)
+  10          {
+  11   1          MODIFY_HIRC(HIRC_24);
+  12   1          SFRS = 0;
+  13   1          Board_Init();
+  14   1          I2C_TestInit();
+  15   1          RS485_TestInit();
+  16   1          LCD_Init();
+  17   1          InterfaceTest_Init();
+  18   1      
+  19   1          while (1)
+  20   1          {
+  21   2              InterfaceTest_Poll();
+  22   2          }
+  23   1      }
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =     28    ----
+   CONSTANT SIZE    =   ----    ----
+   XDATA SIZE       =   ----    ----
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =   ----    ----
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)

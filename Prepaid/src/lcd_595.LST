@@ -1,0 +1,106 @@
+C51 COMPILER V9.60.0.0   LCD_595                                                           10/09/2026 16:51:50 PAGE 1   
+
+
+C51 COMPILER V9.60.0.0, COMPILATION OF MODULE LCD_595
+OBJECT MODULE PLACED IN C:\Users\Dinesh\.copilot\session-state\48682e31-b259-4d1f-8ab3-35f8af34aec9\files\modbus-check\lcd_595.obj
+COMPILER INVOKED BY: D:\Applications\C51\BIN\C51.exe src\lcd_595.c INCDIR(src;vendor\MS51_BSP\MS51FC0AE_MS51XC0BE_MS51EB
+                    -0AE_MS51EC0AE_MS51TC0AE_MS51PC0AE\Library\Device\Include;vendor\MS51_BSP\MS51FC0AE_MS51XC0BE_MS51EB0AE_MS51EC0AE_MS51TC0
+                    -AE_MS51PC0AE\Library\StdDriver\inc) LARGE OBJECT(C:\Users\Dinesh\.copilot\session-state\48682e31-b259-4d1f-8ab3-35f8af34
+                    -aec9\files\modbus-check\lcd_595.obj)
+
+line level    source
+
+   1          #include "lcd_595.h"
+   2          #include "board_io.h"
+   3          
+   4          #define LCD_RS_MASK 0x20
+   5          #define LCD_EN_MASK 0x40
+   6          #define LCD_BACKLIGHT_MASK 0x01
+   7          
+   8          static void LCD_WriteNibble(uint8_t nibble, uint8_t is_data)
+   9          {
+  10   1          uint8_t value;
+  11   1      
+  12   1          value = (uint8_t)((nibble & 0x0F) << 1);
+  13   1          value |= LCD_BACKLIGHT_MASK;
+  14   1          if (is_data) value |= LCD_RS_MASK;
+  15   1          Board_Shift595((uint8_t)(value | LCD_EN_MASK));
+  16   1          Board_Shift595(value);
+  17   1      }
+  18          
+  19          static void LCD_WriteByte(uint8_t value, uint8_t is_data)
+  20          {
+  21   1          LCD_WriteNibble((uint8_t)(value >> 4), is_data);
+  22   1          LCD_WriteNibble(value, is_data);
+  23   1      }
+  24          
+  25          void LCD_Command(uint8_t command)
+  26          {
+  27   1          LCD_WriteByte(command, 0);
+  28   1          if (command == 0x01 || command == 0x02)
+  29   1          {
+  30   2              Board_DelayMs(2);
+  31   2          }
+  32   1      }
+  33          
+  34          void LCD_Init(void)
+  35          {
+  36   1          Board_DelayMs(40);
+  37   1          LCD_WriteNibble(0x03, 0);
+  38   1          Board_DelayMs(5);
+  39   1          LCD_WriteNibble(0x03, 0);
+  40   1          Board_DelayMs(1);
+  41   1          LCD_WriteNibble(0x03, 0);
+  42   1          LCD_WriteNibble(0x02, 0);
+  43   1          LCD_Command(0x28);
+  44   1          LCD_Command(0x0C);
+  45   1          LCD_Command(0x06);
+  46   1          LCD_Command(0x01);
+  47   1      }
+  48          
+  49          void LCD_WriteChar(char value)
+  50          {
+  51   1          LCD_WriteByte((uint8_t)value, 1);
+  52   1      }
+C51 COMPILER V9.60.0.0   LCD_595                                                           10/09/2026 16:51:50 PAGE 2   
+
+  53          
+  54          void LCD_WriteText(char code *text)
+  55          {
+  56   1          while (*text != '\0')
+  57   1          {
+  58   2              LCD_WriteChar(*text++);
+  59   2          }
+  60   1      }
+  61          
+  62          void LCD_SetCursor(uint8_t row, uint8_t column)
+  63          {
+  64   1          uint8_t address;
+  65   1      
+  66   1          address = (row == 0) ? 0x00 : 0x40;
+  67   1          LCD_Command((uint8_t)(0x80 | (address + column)));
+  68   1      }
+  69          
+  70          void LCD_WriteHex(uint8_t value)
+  71          {
+  72   1          uint8_t digit;
+  73   1      
+  74   1          digit = (uint8_t)(value >> 4);
+  75   1          LCD_WriteChar((char)(digit < 10 ? ('0' + digit) : ('A' + digit - 10)));
+  76   1          digit = (uint8_t)(value & 0x0F);
+  77   1          LCD_WriteChar((char)(digit < 10 ? ('0' + digit) : ('A' + digit - 10)));
+  78   1      }
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =    289    ----
+   CONSTANT SIZE    =   ----    ----
+   XDATA SIZE       =   ----       7
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =   ----    ----
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)
