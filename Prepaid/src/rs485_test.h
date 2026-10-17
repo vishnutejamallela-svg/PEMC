@@ -3,7 +3,7 @@
 
 #include "ms51_device.h"
 
-#define ENERGY_METER_REGISTER_COUNT 4
+#define ENERGY_METER_REGISTER_COUNT 200
 
 /* Add these globals to Keil Watch 1 while the target is running. */
 extern volatile uint8_t energy_meter_connected;

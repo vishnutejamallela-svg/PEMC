@@ -5,13 +5,18 @@
 #define METER_SLAVE_ID          4
 #define CONTROLLER_SLAVE_ID     1
 #define METER_BAUD_RATE         9600UL
-#define METER_REGISTER_START    0
+/* Raw Modbus offset for the ML14XX 4X block beginning at 40155. */
+#define METER_REGISTER_START    154
 #define METER_REGISTER_COUNT    ENERGY_METER_REGISTER_COUNT
 #define SLAVE_REGISTER_COUNT    METER_REGISTER_COUNT
 #define RTU_FRAME_GAP_MS        4
 #define MASTER_TIMEOUT_MS       300
 #define MASTER_POLL_INTERVAL_MS 1000
-#define RX_BUFFER_SIZE          48
+#define METER_READ_CHUNK_SIZE   20
+#define MODBUS_MAX_READ_REGISTERS 125
+#define CONTROLLER_RX_BUFFER_SIZE 8
+#define METER_RX_BUFFER_SIZE    (5 + (METER_READ_CHUNK_SIZE * 2))
+#define TX_BUFFER_SIZE          (5 + (MODBUS_MAX_READ_REGISTERS * 2))
 #define METER_EEPROM_ADDRESS    0x50
 #define METER_EEPROM_OFFSET     0x0020
 #define METER_EEPROM_RECORD_SIZE 14
@@ -22,9 +27,9 @@
 #define I2C_STA                 0x20
 #define I2C_ENABLE              0x40
 
-static uint8_t xdata port1_rx_buffer[RX_BUFFER_SIZE];
-static uint8_t xdata port2_rx_buffer[RX_BUFFER_SIZE];
-static uint8_t xdata tx_buffer[RX_BUFFER_SIZE];
+static uint8_t xdata port1_rx_buffer[CONTROLLER_RX_BUFFER_SIZE];
+static uint8_t xdata port2_rx_buffer[METER_RX_BUFFER_SIZE];
+static uint8_t xdata tx_buffer[TX_BUFFER_SIZE];
 volatile uint16_t xdata energy_meter_registers[METER_REGISTER_COUNT];
 /* Last successfully received meter values; retained across poll timeouts/errors. */
 volatile uint16_t xdata s_energy_meter_registers[METER_REGISTER_COUNT];
@@ -63,11 +68,15 @@ static volatile uint8_t port2_tx_complete;
 static uint8_t master_waiting;
 static uint16_t master_timer_ms;
 static uint16_t master_timeout_ms;
+#if ENERGY_METER_REGISTER_COUNT <= 4
 static uint16_t xdata meter_eeprom_last_saved[METER_REGISTER_COUNT];
+#endif
 static uint8_t xdata meter_eeprom_record[METER_EEPROM_RECORD_SIZE];
 static uint8_t meter_eeprom_save_pending;
 static uint8_t meter_eeprom_has_saved_record;
 static uint32_t meter_eeprom_save_timer_ms;
+static uint16_t meter_read_offset;
+static uint8_t meter_read_count;
 
 static uint8_t RS485_EvenParity(uint8_t value)
 {
@@ -269,6 +278,7 @@ static void MeterEeprom_BuildRecord(void)
     meter_eeprom_record[13] = (uint8_t)(crc >> 8);
 }
 
+#if ENERGY_METER_REGISTER_COUNT <= 4
 static void MeterEeprom_Load(void)
 {
     uint8_t index;
@@ -301,9 +311,11 @@ static void MeterEeprom_Load(void)
     meter_eeprom_has_saved_record = 1;
     meter_eeprom_loaded = 1;
 }
+#endif
 
 static void MeterEeprom_RequestSave(void)
 {
+#if ENERGY_METER_REGISTER_COUNT <= 4
     uint8_t index;
 
     for (index = 0; index < METER_REGISTER_COUNT; index++)
@@ -319,10 +331,12 @@ static void MeterEeprom_RequestSave(void)
             return;
         }
     }
+#endif
 }
 
 static void MeterEeprom_Service(void)
 {
+#if ENERGY_METER_REGISTER_COUNT <= 4
     uint8_t index;
 
     if (!meter_eeprom_present || !meter_eeprom_save_pending ||
@@ -349,6 +363,7 @@ static void MeterEeprom_Service(void)
     {
         meter_eeprom_save_count++;
     }
+#endif
 }
 
 static uint8_t Modbus_FrameValid(uint8_t xdata *frame, uint8_t length)
@@ -389,7 +404,7 @@ void RS485_UART0_ISR(void) interrupt 4
         {
             port2_rx_parity_error = 1;
         }
-        if (port2_rx_length < RX_BUFFER_SIZE)
+        if (port2_rx_length < METER_RX_BUFFER_SIZE)
         {
             port2_rx_buffer[port2_rx_length++] = value;
             port2_silence_ms = 0;
@@ -414,10 +429,6 @@ void RS485_UART1_ISR(void) interrupt 15
     {
         value = SBUF_1;
         RI_1 = 0;
-        if (port1_rx_byte_count != 0xFFFF)
-        {
-            port1_rx_byte_count++;
-        }
         if (RB8_1 != RS485_EvenParity(value))
         {
             port1_rx_parity_error = 1;
@@ -426,7 +437,11 @@ void RS485_UART1_ISR(void) interrupt 15
                 port1_parity_error_count++;
             }
         }
-        if (port1_rx_length < RX_BUFFER_SIZE)
+        if (port1_rx_byte_count != 0xFFFF)
+        {
+            port1_rx_byte_count++;
+        }
+        if (port1_rx_length < CONTROLLER_RX_BUFFER_SIZE)
         {
             port1_rx_buffer[port1_rx_length++] = value;
             port1_silence_ms = 0;
@@ -450,10 +465,7 @@ static void RS485_SendFrame(uint8_t port, uint8_t xdata *frame, uint8_t length)
     frame[length + 1] = (uint8_t)(crc >> 8);
 
     Board_SetRs485Transmit(port, 1);
-    if (port == 1)
-    {
-        Board_DelayMs(1);
-    }
+    Board_DelayMs(1);
     for (index = 0; index < (uint8_t)(length + 2); index++)
     {
         RS485_SendByte(port, frame[index]);
@@ -519,7 +531,8 @@ static void Modbus_HandleSlaveFrame(uint8_t length)
         return;
     }
     quantity = port1_rx_buffer[5];
-    if (quantity == 0 || quantity > SLAVE_REGISTER_COUNT ||
+    if (quantity == 0 || quantity > MODBUS_MAX_READ_REGISTERS ||
+        quantity > SLAVE_REGISTER_COUNT ||
         start_address >= SLAVE_REGISTER_COUNT ||
         (uint16_t)(start_address + quantity) > SLAVE_REGISTER_COUNT)
     {
@@ -545,12 +558,17 @@ static void Modbus_HandleSlaveFrame(uint8_t length)
 
 static void RS485_StartMeterRead(void)
 {
+    uint16_t remaining;
+
+    remaining = METER_REGISTER_COUNT - meter_read_offset;
+    meter_read_count = (remaining > METER_READ_CHUNK_SIZE) ?
+                       METER_READ_CHUNK_SIZE : (uint8_t)remaining;
     tx_buffer[0] = METER_SLAVE_ID;
     tx_buffer[1] = 0x03;
-    tx_buffer[2] = (uint8_t)(METER_REGISTER_START >> 8);
-    tx_buffer[3] = (uint8_t)METER_REGISTER_START;
+    tx_buffer[2] = (uint8_t)((METER_REGISTER_START + meter_read_offset) >> 8);
+    tx_buffer[3] = (uint8_t)(METER_REGISTER_START + meter_read_offset);
     tx_buffer[4] = 0;
-    tx_buffer[5] = METER_REGISTER_COUNT;
+    tx_buffer[5] = meter_read_count;
     port2_rx_length = 0;
     port2_rx_parity_error = 0;
     port2_silence_ms = 0;
@@ -594,9 +612,9 @@ static void RS485_HandleMeterResponse(uint8_t length)
         energy_meter_master_state = 0;
         return;
     }
-    expected_length = (uint8_t)(5 + METER_REGISTER_COUNT * 2);
+    expected_length = (uint8_t)(5 + meter_read_count * 2);
     if (port2_rx_buffer[1] != 0x03 ||
-        port2_rx_buffer[2] != (METER_REGISTER_COUNT * 2) ||
+        port2_rx_buffer[2] != (meter_read_count * 2) ||
         length != expected_length)
     {
         energy_meter_last_error = ENERGY_METER_ERROR_BAD_RESPONSE;
@@ -611,14 +629,22 @@ static void RS485_HandleMeterResponse(uint8_t length)
         energy_meter_master_state = 0;
         return;
     }
-    for (index = 0; index < METER_REGISTER_COUNT; index++)
+    for (index = 0; index < meter_read_count; index++)
     {
-        energy_meter_registers[index] =
+        energy_meter_registers[meter_read_offset + index] =
             ((uint16_t)port2_rx_buffer[3 + (index * 2)] << 8) |
             port2_rx_buffer[4 + (index * 2)];
-			
-        s_energy_meter_registers[index] = energy_meter_registers[index];
+        s_energy_meter_registers[meter_read_offset + index] =
+            energy_meter_registers[meter_read_offset + index];
     }
+    meter_read_offset += meter_read_count;
+    if (meter_read_offset < METER_REGISTER_COUNT)
+    {
+        master_waiting = 0;
+        RS485_StartMeterRead();
+        return;
+    }
+    meter_read_offset = 0;
     energy_meter_connected = 1;
     energy_meter_data_valid = 1;
     MeterEeprom_RequestSave();
@@ -662,7 +688,9 @@ void RS485_TestInit(void)
     {
         energy_meter_registers[index] = 0;
         s_energy_meter_registers[index] = 0;
+#if ENERGY_METER_REGISTER_COUNT <= 4
         meter_eeprom_last_saved[index] = 0;
+#endif
     }
     energy_meter_connected = 0;
     energy_meter_data_valid = 0;
@@ -700,7 +728,10 @@ void RS485_TestInit(void)
     meter_eeprom_has_saved_record = 0;
     meter_eeprom_save_timer_ms = 0;
     MeterEeprom_Init();
+#if ENERGY_METER_REGISTER_COUNT <= 4
     MeterEeprom_Load();
+#endif
+    meter_read_offset = 0;
     master_waiting = 0;
     master_timer_ms = MASTER_POLL_INTERVAL_MS;
     master_timeout_ms = 0;
@@ -781,6 +812,7 @@ void RS485_Poll(void)
                 energy_meter_timeout_count++;
             }
             RS485_ClearMeterRegisters();
+            meter_read_offset = 0;
         }
     }
     else if (master_timer_ms < MASTER_POLL_INTERVAL_MS)
@@ -805,6 +837,8 @@ void RS485_Poll(void)
     {
         meter_eeprom_save_timer_ms++;
     }
+#if ENERGY_METER_REGISTER_COUNT <= 4
     MeterEeprom_Service();
+#endif
 }
 
