@@ -392,6 +392,26 @@
               <FilePath>.\src\board_io.h</FilePath>
             </File>
             <File>
+              <FileName>i2c_probe.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\src\i2c_probe.c</FilePath>
+            </File>
+            <File>
+              <FileName>i2c_probe.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>.\src\i2c_probe.h</FilePath>
+            </File>
+            <File>
+              <FileName>lcd_595.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\src\lcd_595.c</FilePath>
+            </File>
+            <File>
+              <FileName>lcd_595.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>.\src\lcd_595.h</FilePath>
+            </File>
+            <File>
               <FileName>rs485_test.c</FileName>
               <FileType>1</FileType>
               <FilePath>.\src\rs485_test.c</FilePath>

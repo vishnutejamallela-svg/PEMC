@@ -3,15 +3,20 @@
 
 #define LCD_RS_MASK 0x20
 #define LCD_EN_MASK 0x40
-#define LCD_BACKLIGHT_MASK 0x01
+#define LCD_BACKLIGHT_CONTROL_MASK 0x01
+
+volatile uint8_t back_light_on = BACK_LIGHT_ON;
 
 static void LCD_WriteNibble(uint8_t nibble, uint8_t is_data)
 {
     uint8_t value;
 
     value = (uint8_t)((nibble & 0x0F) << 1);
-    value |= LCD_BACKLIGHT_MASK;
+    /* QA drives the PNP backlight switch; its control is active low. */
+    if (back_light_on != BACK_LIGHT_ON) value |= LCD_BACKLIGHT_CONTROL_MASK;
     if (is_data) value |= LCD_RS_MASK;
+    /* Set LCD data/RS while Enable is low to meet LCD setup time. */
+    Board_Shift595(value);
     Board_Shift595((uint8_t)(value | LCD_EN_MASK));
     Board_Shift595(value);
 }
@@ -29,16 +34,30 @@ void LCD_Command(uint8_t command)
     {
         Board_DelayMs(2);
     }
+    else
+    {
+        /* Allow the LCD controller to finish before the next command. */
+        Board_DelayMs(1);
+    }
+}
+
+void LCD_ApplyBacklight(void)
+{
+    /* QA low turns on the PNP backlight switch; QA high turns it off. */
+    Board_Shift595(back_light_on == BACK_LIGHT_ON ?
+                   0x00 : LCD_BACKLIGHT_CONTROL_MASK);
 }
 
 void LCD_Init(void)
 {
+    LCD_ApplyBacklight();
     Board_DelayMs(40);
     LCD_WriteNibble(0x03, 0);
     Board_DelayMs(5);
     LCD_WriteNibble(0x03, 0);
     Board_DelayMs(1);
     LCD_WriteNibble(0x03, 0);
+    Board_DelayMs(1);
     LCD_WriteNibble(0x02, 0);
     LCD_Command(0x28);
     LCD_Command(0x0C);
@@ -49,6 +68,8 @@ void LCD_Init(void)
 void LCD_WriteChar(char value)
 {
     LCD_WriteByte((uint8_t)value, 1);
+    /* The display is write-only here, so wait instead of polling its busy flag. */
+    Board_DelayMs(1);
 }
 
 void LCD_WriteText(char code *text)
